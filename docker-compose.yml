@@ -1,0 +1,12 @@
+version: '3.9'
+
+services:
+  hardhat:
+    container_name: hardhat
+    build:
+      dockerfile: docker/Dockerfile
+      context: .
+    ports:
+      - "8545:8545"
+    volumes:
+      - .:/app
