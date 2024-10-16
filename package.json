@@ -2,6 +2,7 @@
   "name": "hardhat-project",
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
-    "hardhat": "^2.22.13"
+    "hardhat": "^2.22.13",
+    "solidity-coverage": "^0.8.13"
   }
 }

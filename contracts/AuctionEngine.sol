@@ -32,8 +32,10 @@ contract AuctionEngine {
         require(_startPrice >= _discountRate * duration, "incorrect start price");
 
         Auction memory newAuction = Auction({
+            stopped: false,
             seller: payable(msg.sender),
             startPrice: _startPrice,
+            finalPrice: _startPrice,
             discountRate: _discountRate,
             startAt: block.timestamp,
             endAt: block.timestamp + duration,
@@ -45,6 +47,8 @@ contract AuctionEngine {
     }
 
     function getPriceFor(uint index) public view returns(uint) {
+        require(index < auctions.length, "auction not found");
+
         Auction memory auction = auctions[index];
         require(!auction.stopped, "auction is stopped");
 
