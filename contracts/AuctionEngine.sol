@@ -26,6 +26,11 @@ contract AuctionEngine {
         owner = msg.sender;
     }
 
+    modifier onlyOwner() {
+        require(msg.sender == owner, "access denied");
+        _;
+    }
+
     function createAuction(uint _duration, uint _startPrice, uint _discountRate, string calldata _item) external {
         uint duration = _duration != 0 ? _duration : DURATION;
 
@@ -59,6 +64,7 @@ contract AuctionEngine {
         require(index < auctions.length, "auction not found");
 
         Auction storage auction = auctions[index];
+        require(msg.sender != auction.seller, "you can not buy your own lot");
         require(!auction.stopped, "auction is stopped");
         require(block.timestamp < auction.endAt, "auction is ended");
 
@@ -78,5 +84,9 @@ contract AuctionEngine {
         );
 
         emit AuctionEnded(index, currentPrice, msg.sender);
+    }
+
+    function withdraw() external onlyOwner {
+        payable(owner).transfer(address(this).balance);
     }
 }

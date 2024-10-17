@@ -52,7 +52,7 @@ describe("AuctionEngine", function () {
 
   describe("createAuction", function () {
     it("incorrect start price failed", async function () {
-      expect(contract.connect(seller).createAuction(
+      await expect(contract.connect(seller).createAuction(
         actionDefaultDuration,
         actionDefaultPrice,
         ethers.parseEther("0.00001"),
@@ -82,15 +82,15 @@ describe("AuctionEngine", function () {
 
   describe("buy", function () {
     it("auction not found failed", async function () {
-      expect(contract.buy(0, { value: actionDefaultPrice }))
+      await expect(contract.buy(0, { value: actionDefaultPrice }))
         .to.be.revertedWith("auction not found")
     })
 
     it("seller cannot buy own lot failed", async function () {
       await createDefaultAuction()
 
-      expect(contract.connect(seller).buy(0, { value: actionDefaultPrice }))
-        .to.be.revertedWith("you can buy your own lot")
+      await expect(contract.connect(seller).buy(0, { value: actionDefaultPrice }))
+        .to.be.revertedWith("you can not buy your own lot")
     })
 
     it("auction is stopped failed", async function () {
@@ -101,7 +101,7 @@ describe("AuctionEngine", function () {
         .buy(0, { value: ethers.parseEther("0.0002") })
       await txBuy.wait()
 
-      expect(contract.connect(firstBuyer).buy(0, { value: actionDefaultPrice }))
+      await expect(contract.connect(firstBuyer).buy(0, { value: actionDefaultPrice }))
         .to.be.revertedWith("auction is stopped")
     })
 
@@ -109,14 +109,14 @@ describe("AuctionEngine", function () {
       await createDefaultAuction()
       await timeMachine(actionDefaultDuration + 1)
 
-      expect(contract.connect(firstBuyer).buy(0, { value: actionDefaultPrice }))
+      await expect(contract.connect(firstBuyer).buy(0, { value: actionDefaultPrice }))
         .to.be.revertedWith("auction is ended")
     })
 
     it("buyer have not enough funds", async function () {
       await createDefaultAuction()
 
-      expect(contract.connect(firstBuyer).buy(0, { value: 1 }))
+      await expect(contract.connect(firstBuyer).buy(0, { value: 1 }))
         .to.be.revertedWith("not enough funds")
     })
 
@@ -140,12 +140,13 @@ describe("AuctionEngine", function () {
 
       expect(txBuy).to.emit(contract, "AuctionEnded")
         .withArgs(0, sellPrice, firstBuyer.address)
+      expect(sellAuction.stopped).to.be.true
     })
   })
 
   describe("getPriceFor", function () {
     it("auction not found failed", async function () {
-      expect(contract.getPriceFor(10)).to.be.revertedWith("auction not found")
+      await expect(contract.getPriceFor(10)).to.be.revertedWith("auction not found")
     })
 
     it("auction is stopped failed", async function () {
@@ -156,7 +157,7 @@ describe("AuctionEngine", function () {
         .buy(0, { value: ethers.parseEther("0.0002") })
       await txBuy.wait()
 
-      expect(contract.connect(secondBuyer).getPriceFor(0))
+      await expect(contract.connect(secondBuyer).getPriceFor(0))
         .to.be.revertedWith("auction is stopped")
     })
 
@@ -171,6 +172,34 @@ describe("AuctionEngine", function () {
 
       price = await contract.connect(secondBuyer).getPriceFor(0)
       expect(price).to.eq(actionDefaultPrice - BigInt(actionDefaultDiscountRate * waitingSec))
+    })
+  })
+
+  describe("withdraw", function () {
+    it("only owner can withdraw failed", async function () {
+      await expect(contract.connect(firstBuyer).withdraw())
+        .to.be.revertedWith("access denied")
+    })
+
+    it('success', async function () {
+      await createDefaultAuction()
+
+      const waitingSec = 5
+      await timeMachine(waitingSec)
+
+      const txBuy = await contract.connect(secondBuyer).buy(0, { value: actionDefaultPrice })
+      await txBuy.wait()
+
+      const sellAuction = await contract.auctions(0)
+      const feePrice = (sellAuction.finalPrice * 5n) / 100n
+
+      const txWithdraw = await contract.connect(owner).withdraw()
+      await txWithdraw.wait()
+
+      await expect(txWithdraw).to.changeEtherBalances(
+        [owner, contract],
+        [feePrice, -feePrice]
+      )
     })
   })
 })
