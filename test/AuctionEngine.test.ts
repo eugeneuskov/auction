@@ -1,10 +1,10 @@
 import {loadFixture, ethers, expect} from "./setup";
 
 describe("AuctionEngine", function () {
-  const newActionDefaultDiscountRate = 3
-  const newActionDefaultDuration = 60
-  const newActionDefaultPrice = ethers.parseEther("0.0001")
-  const newActionDefaultItemName = "test item"
+  const actionDefaultDiscountRate = 3
+  const actionDefaultDuration = 60
+  const actionDefaultPrice = ethers.parseEther("0.0001")
+  const actionDefaultItemName = "test item"
 
   let owner
   let seller
@@ -27,64 +27,129 @@ describe("AuctionEngine", function () {
     expect(auctionOwner).to.eq(owner.address)
   })
 
+  async function createDefaultAuction() {
+    const tx = await contract.connect(seller).createAuction(
+      actionDefaultDuration,
+      actionDefaultPrice,
+      actionDefaultDiscountRate,
+      actionDefaultItemName
+    )
+    await tx.wait()
+
+    return tx
+  }
+
   async function getBlockTimestamp(blockNumber: bigint) {
     // @ts-ignore
     return (await ethers.provider.getBlock(blockNumber)).timestamp
   }
 
-  function sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+  async function timeMachine(waitingSec: number) {
+    // Увеличиваем время на `waitingSec` секунд и создаем новый блок
+    await ethers.provider.send("evm_increaseTime", [waitingSec]);
+    await ethers.provider.send("evm_mine");
   }
 
   describe("createAuction", function () {
     it("incorrect start price failed", async function () {
       expect(contract.connect(seller).createAuction(
-        newActionDefaultDuration,
-        newActionDefaultPrice,
+        actionDefaultDuration,
+        actionDefaultPrice,
         ethers.parseEther("0.00001"),
-        newActionDefaultItemName
+        actionDefaultItemName
       )).to.be.revertedWith("incorrect start price")
     })
 
     it("success", async function () {
-      const tx = await contract.connect(seller).createAuction(
-        newActionDefaultDuration,
-        newActionDefaultPrice,
-        newActionDefaultDiscountRate,
-        newActionDefaultItemName
-      )
-      await tx.wait()
+      const tx = await createDefaultAuction()
 
       const blockTimestamp = await getBlockTimestamp(tx.blockNumber)
       const newAuction = await contract.auctions(0)
 
       expect(newAuction.stopped).to.be.false
       expect(newAuction.seller).to.eq(seller.address)
-      expect(newAuction.startPrice).to.eq(newActionDefaultPrice)
-      expect(newAuction.finalPrice).to.eq(newActionDefaultPrice)
-      expect(newAuction.discountRate).to.eq(newActionDefaultDiscountRate)
+      expect(newAuction.startPrice).to.eq(actionDefaultPrice)
+      expect(newAuction.finalPrice).to.eq(actionDefaultPrice)
+      expect(newAuction.discountRate).to.eq(actionDefaultDiscountRate)
       expect(newAuction.startAt).to.eq(blockTimestamp)
-      expect(newAuction.endAt).to.eq(blockTimestamp + newActionDefaultDuration)
-      expect(newAuction.item).to.eq(newActionDefaultItemName)
+      expect(newAuction.endAt).to.eq(blockTimestamp + actionDefaultDuration)
+      expect(newAuction.item).to.eq(actionDefaultItemName)
 
       expect(newAuction).to.emit(contract, "AuctionCreated")
-        .withArgs(0, newActionDefaultDuration, newActionDefaultPrice, newActionDefaultItemName)
+        .withArgs(0, actionDefaultDuration, actionDefaultPrice, actionDefaultItemName)
+    })
+  })
+
+  describe("buy", function () {
+    it("auction not found failed", async function () {
+      expect(contract.buy(0, { value: actionDefaultPrice }))
+        .to.be.revertedWith("auction not found")
+    })
+
+    it("seller cannot buy own lot failed", async function () {
+      await createDefaultAuction()
+
+      expect(contract.connect(seller).buy(0, { value: actionDefaultPrice }))
+        .to.be.revertedWith("you can buy your own lot")
+    })
+
+    it("auction is stopped failed", async function () {
+      await createDefaultAuction()
+
+      // just for stopping
+      const txBuy = await contract.connect(secondBuyer)
+        .buy(0, { value: ethers.parseEther("0.0002") })
+      await txBuy.wait()
+
+      expect(contract.connect(firstBuyer).buy(0, { value: actionDefaultPrice }))
+        .to.be.revertedWith("auction is stopped")
+    })
+
+    it("auction is ended failed", async function () {
+      await createDefaultAuction()
+      await timeMachine(actionDefaultDuration + 1)
+
+      expect(contract.connect(firstBuyer).buy(0, { value: actionDefaultPrice }))
+        .to.be.revertedWith("auction is ended")
+    })
+
+    it("buyer have not enough funds", async function () {
+      await createDefaultAuction()
+
+      expect(contract.connect(firstBuyer).buy(0, { value: 1 }))
+        .to.be.revertedWith("not enough funds")
+    })
+
+    it("success", async function () {
+      await createDefaultAuction()
+
+      const waitingSec = 10
+      await timeMachine(waitingSec)
+
+      const txBuy = await contract.connect(firstBuyer).buy(0, { value: actionDefaultPrice })
+      await txBuy.wait()
+
+      const sellAuction = await contract.auctions(0)
+      const sellPrice = sellAuction.finalPrice
+      const feePrice = (sellPrice * 5n) / 100n
+
+      await expect(txBuy).to.changeEtherBalances(
+        [firstBuyer, seller, contract],
+        [-sellPrice, sellPrice - feePrice, feePrice]
+      )
+
+      expect(txBuy).to.emit(contract, "AuctionEnded")
+        .withArgs(0, sellPrice, firstBuyer.address)
     })
   })
 
   describe("getPriceFor", function () {
-    it("incorrect index failed", async function () {
+    it("auction not found failed", async function () {
       expect(contract.getPriceFor(10)).to.be.revertedWith("auction not found")
     })
 
     it("auction is stopped failed", async function () {
-      const txCreate = await contract.connect(seller).createAuction(
-        newActionDefaultDuration,
-        newActionDefaultPrice,
-        newActionDefaultDiscountRate,
-        newActionDefaultItemName
-      )
-      await txCreate.wait()
+      await createDefaultAuction()
 
       // just for stopping
       const txBuy = await contract.connect(firstBuyer)
@@ -96,27 +161,16 @@ describe("AuctionEngine", function () {
     })
 
     it("get price success", async function () {
-      this.timeout(5000)
-
-      const txCreate = await contract.connect(seller).createAuction(
-        newActionDefaultDuration,
-        newActionDefaultPrice,
-        newActionDefaultDiscountRate,
-        newActionDefaultItemName
-      )
-      await txCreate.wait()
+      await createDefaultAuction()
 
       let price = await contract.connect(secondBuyer).getPriceFor(0)
-      expect(price).to.eq(newActionDefaultPrice)
+      expect(price).to.eq(actionDefaultPrice)
 
       const waitingSec = 2
-      // Увеличиваем время на waitingSec секунд и создаем новый блок
-      await ethers.provider.send("evm_increaseTime", [waitingSec]);
-      //
-      await ethers.provider.send("evm_mine");
+      await timeMachine(waitingSec)
 
       price = await contract.connect(secondBuyer).getPriceFor(0)
-      expect(price).to.eq(newActionDefaultPrice - BigInt(newActionDefaultDiscountRate * waitingSec))
+      expect(price).to.eq(actionDefaultPrice - BigInt(actionDefaultDiscountRate * waitingSec))
     })
   })
 })
