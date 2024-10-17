@@ -56,6 +56,8 @@ contract AuctionEngine {
     }
 
     function buy(uint index) external payable {
+        require(index < auctions.length, "auction not found");
+
         Auction storage auction = auctions[index];
         require(!auction.stopped, "auction is stopped");
         require(block.timestamp < auction.endAt, "auction is ended");
